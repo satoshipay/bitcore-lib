@@ -4,15 +4,6 @@ var bitcore = module.exports;
 
 // module information
 bitcore.version = 'v' + require('./package.json').version;
-bitcore.versionGuard = function(version) {
-  if (version !== undefined) {
-    var message = 'More than one instance of bitcore-lib found. ' + 
-      'Please make sure that you are not mixing instances of classes of the different versions of bitcore.';
-    console.warn(message);
-  }
-};
-bitcore.versionGuard(global._bitcore);
-global._bitcore = bitcore.version;
 
 // crypto
 bitcore.crypto = {};
@@ -65,5 +56,4 @@ bitcore.deps.elliptic = require('elliptic');
 bitcore.deps._ = require('lodash');
 
 // Internal usage, exposed for testing/advanced tweaking
-bitcore._HDKeyCache = require('./lib/hdkeycache');
 bitcore.Transaction.sighash = require('./lib/transaction/sighash');

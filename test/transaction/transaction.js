@@ -28,6 +28,12 @@ describe('Transaction', function() {
     transaction.uncheckedSerialize().should.equal(tx_1_hex);
   });
 
+  it('should parse the version as a signed integer', function () {
+    var transaction = Transaction('ffffffff0000ffffffff')
+    transaction.version.should.equal(-1);
+    transaction.nLockTime.should.equal(0xffffffff);
+  });
+
   it('fails if an invalid parameter is passed to constructor', function() {
     expect(function() {
       return new Transaction(1);
@@ -200,6 +206,14 @@ describe('Transaction', function() {
     script: Script.buildPublicKeyHashOut(fromAddress).toString(),
     satoshis: 100000
   };
+
+  var simpleUtxoWith1000000Satoshis = {
+    address: fromAddress,
+    txId: 'a477af6b2667c29670467e4e0728b685ee07b240235771862318e29ddbe58458',
+    outputIndex: 0,
+    script: Script.buildPublicKeyHashOut(fromAddress).toString(),
+    satoshis: 1000000
+  };
   var anyoneCanSpendUTXO = JSON.parse(JSON.stringify(simpleUtxoWith100000Satoshis));
   anyoneCanSpendUTXO.script = new Script().add('OP_TRUE');
   var toAddress = 'mrU9pEmAx26HcbKVrABvgL7AwA5fjNFoDc';
@@ -214,10 +228,11 @@ describe('Transaction', function() {
   var simpleUtxoWith1BTC = {
     address: fromAddress,
     txId: 'a477af6b2667c29670467e4e0728b685ee07b240235771862318e29ddbe58458',
-    outputIndex: 0,
+    outputIndex: 1,
     script: Script.buildPublicKeyHashOut(fromAddress).toString(),
     satoshis: 1e8
   };
+
   var tenth = 1e7;
   var fourth = 25e6;
   var half = 5e7;
@@ -289,12 +304,12 @@ describe('Transaction', function() {
   describe('change address', function() {
     it('can calculate simply the output amount', function() {
       var transaction = new Transaction()
-        .from(simpleUtxoWith100000Satoshis)
-        .to(toAddress, 50000)
+        .from(simpleUtxoWith1000000Satoshis)
+        .to(toAddress, 500000)
         .change(changeAddress)
         .sign(privateKey);
       transaction.outputs.length.should.equal(2);
-      transaction.outputs[1].satoshis.should.equal(40000);
+      transaction.outputs[1].satoshis.should.equal(400000);
       transaction.outputs[1].script.toString()
         .should.equal(Script.fromAddress(changeAddress).toString());
       var actual = transaction.getChangeOutput().script.toString();
@@ -303,8 +318,8 @@ describe('Transaction', function() {
     });
     it('accepts a P2SH address for change', function() {
       var transaction = new Transaction()
-        .from(simpleUtxoWith100000Satoshis)
-        .to(toAddress, 50000)
+        .from(simpleUtxoWith1000000Satoshis)
+        .to(toAddress, 500000)
         .change(changeAddressP2SH)
         .sign(privateKey);
       transaction.outputs.length.should.equal(2);
@@ -514,9 +529,9 @@ describe('Transaction', function() {
       var transaction = new Transaction();
       transaction.from(simpleUtxoWith1BTC);
       transaction
-        .to(toAddress, 90000000)
+        .to(toAddress, 84000000)
         .change(changeAddress)
-        .fee(10000000);
+        .fee(16000000);
 
       expect(function() {
         return transaction.serialize({
@@ -919,7 +934,7 @@ describe('Transaction', function() {
         .change(changeAddress)
         .to(toAddress, 1000);
       transaction.inputAmount.should.equal(100000000);
-      transaction.outputAmount.should.equal(99990000);
+      transaction.outputAmount.should.equal(99900000);
     });
     it('returns correct values for coinjoin transaction', function() {
       // see livenet tx c16467eea05f1f30d50ed6dbc06a38539d9bb15110e4b7dc6653046a3678a718
@@ -1011,7 +1026,7 @@ describe('Transaction', function() {
       tx.outputs.length.should.equal(2);
       tx.outputs[0].satoshis.should.equal(10000000);
       tx.outputs[0].script.toAddress().toString().should.equal(toAddress);
-      tx.outputs[1].satoshis.should.equal(89990000);
+      tx.outputs[1].satoshis.should.equal(89900000);
       tx.outputs[1].script.toAddress().toString().should.equal(changeAddress);
     });
 
@@ -1118,6 +1133,106 @@ describe('Transaction', function() {
         });
       });
 
+    });
+  });
+  describe('Replace-by-fee', function() {
+    describe('#enableRBF', function() {
+      it('only enable inputs not already enabled (0xffffffff)', function() {
+        var tx = new Transaction()
+          .from(simpleUtxoWith1BTC)
+          .from(simpleUtxoWith100000Satoshis)
+          .to([{address: toAddress, satoshis: 50000}])
+          .fee(15000)
+          .change(changeAddress)
+          .sign(privateKey);
+        tx.inputs[0].sequenceNumber = 0x00000000;
+        tx.enableRBF();
+        tx.inputs[0].sequenceNumber.should.equal(0x00000000);
+        tx.inputs[1].sequenceNumber.should.equal(0xfffffffd);
+      });
+      it('enable for inputs with 0xffffffff and 0xfffffffe', function() {
+        var tx = new Transaction()
+          .from(simpleUtxoWith1BTC)
+          .from(simpleUtxoWith100000Satoshis)
+          .to([{address: toAddress, satoshis: 50000}])
+          .fee(15000)
+          .change(changeAddress)
+          .sign(privateKey);
+        tx.inputs[0].sequenceNumber = 0xffffffff;
+        tx.inputs[1].sequenceNumber = 0xfffffffe;
+        tx.enableRBF();
+        tx.inputs[0].sequenceNumber.should.equal(0xfffffffd);
+        tx.inputs[1].sequenceNumber.should.equal(0xfffffffd);
+      });
+    });
+    describe('#isRBF', function() {
+      it('enable and determine opt-in', function() {
+        var tx = new Transaction()
+          .from(simpleUtxoWith100000Satoshis)
+          .to([{address: toAddress, satoshis: 50000}])
+          .fee(15000)
+          .change(changeAddress)
+          .enableRBF()
+          .sign(privateKey);
+        tx.isRBF().should.equal(true);
+      });
+      it('determine opt-out with default sequence number', function() {
+        var tx = new Transaction()
+          .from(simpleUtxoWith100000Satoshis)
+          .to([{address: toAddress, satoshis: 50000}])
+          .fee(15000)
+          .change(changeAddress)
+          .sign(privateKey);
+        tx.isRBF().should.equal(false);
+      });
+      it('determine opt-out with 0xfffffffe', function() {
+        var tx = new Transaction()
+          .from(simpleUtxoWith1BTC)
+          .from(simpleUtxoWith100000Satoshis)
+          .to([{address: toAddress, satoshis: 50000 + 1e8}])
+          .fee(15000)
+          .change(changeAddress)
+          .sign(privateKey);
+        tx.inputs[0].sequenceNumber = 0xfffffffe;
+        tx.inputs[1].sequenceNumber = 0xfffffffe;
+        tx.isRBF().should.equal(false);
+      });
+      it('determine opt-out with 0xffffffff', function() {
+        var tx = new Transaction()
+          .from(simpleUtxoWith1BTC)
+          .from(simpleUtxoWith100000Satoshis)
+          .to([{address: toAddress, satoshis: 50000 + 1e8}])
+          .fee(15000)
+          .change(changeAddress)
+          .sign(privateKey);
+        tx.inputs[0].sequenceNumber = 0xffffffff;
+        tx.inputs[1].sequenceNumber = 0xffffffff;
+        tx.isRBF().should.equal(false);
+      });
+      it('determine opt-in with 0xfffffffd (first input)', function() {
+        var tx = new Transaction()
+          .from(simpleUtxoWith1BTC)
+          .from(simpleUtxoWith100000Satoshis)
+          .to([{address: toAddress, satoshis: 50000 + 1e8}])
+          .fee(15000)
+          .change(changeAddress)
+          .sign(privateKey);
+        tx.inputs[0].sequenceNumber = 0xfffffffd;
+        tx.inputs[1].sequenceNumber = 0xffffffff;
+        tx.isRBF().should.equal(true);
+      });
+      it('determine opt-in with 0xfffffffd (second input)', function() {
+        var tx = new Transaction()
+          .from(simpleUtxoWith1BTC)
+          .from(simpleUtxoWith100000Satoshis)
+          .to([{address: toAddress, satoshis: 50000 + 1e8}])
+          .fee(15000)
+          .change(changeAddress)
+          .sign(privateKey);
+        tx.inputs[0].sequenceNumber = 0xffffffff;
+        tx.inputs[1].sequenceNumber = 0xfffffffd;
+        tx.isRBF().should.equal(true);
+      });
     });
   });
 });
